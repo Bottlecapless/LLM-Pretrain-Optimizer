@@ -14,8 +14,8 @@ High-level flow:
   number of remaining runs, then dispatches the sweep as Marin steps.
 
 Data and models:
-- Uses the DCLM mixture configured for Llama 3 tokenization
-  (`dclm_mixture_config_llama3`).
+- Uses a local Route-B DCLM cache by default, configurable through
+  `cache_root` / `ROUTE_B_CACHE_ROOT`.
 - Maps `model_size` and `optimizer` tags to concrete model and optimizer
   configurations via `map_tag_to_model` and `map_tag_to_config`.
 
@@ -31,7 +31,8 @@ Example:
         optimizer="adamw",
         baseline_config={...},
         sweep_grids={...},
-        tpu_type="v5litepod-128",
+        gpu_type="H100",
+        gpu_count=1,
         DEBUG_MODE=False,
         random_suffix=None,
         force_run=False,
@@ -40,22 +41,55 @@ Example:
 
 # https://github.com/stanford-crfm/marin/issues/725
 # Sweep to determine optimal hyperparameters for Adam on small scale
-from experiments.dclm.tokenize_dclm import dclm_mixture_config_llama3
+import os
+
+from levanter.data.text import LMMixtureDatasetConfig, UrlDatasetSourceConfig
+
 from experiments.optimizer_sweep.defaults import default_train
 from marin.execution.executor import executor_main
 from marin.optimizer_sweep.config import map_tag_to_config
 from marin.optimizer_sweep.format import map_tag_to_format
 from marin.optimizer_sweep.models import calculate_chinchilla, map_tag_to_model
 from marin.optimizer_sweep.utils import (
-    approximate,
-    check_baseline_run,
     config_to_train_config,
-    create_configs,
-    grab_best_run,
     make_sweep_steps,
 )
+from marin.optimizer_sweep.utils_simp import approximate, check_baseline_run, create_configs, grab_best_run
+from marin.resources import GpuConfig
 
 # Sweep to determine optimal training config
+
+DEFAULT_ROUTE_B_CACHE_ROOT = os.environ.get(
+    "ROUTE_B_CACHE_ROOT", "/mnt/afs/250010233/data/marin_route_b/dclm_mix_5.37B"
+)
+DEFAULT_TOKENIZER = os.environ.get("ROUTE_B_TOKENIZER", "marin-community/marin-tokenizer")
+DEFAULT_GPU_TYPE = os.environ.get("ROUTE_B_GPU_TYPE", "H100")
+DEFAULT_GPU_COUNT = int(os.environ.get("ROUTE_B_GPU_COUNT", "1"))
+
+
+def build_route_b_data_config(
+    cache_root: str | None = None,
+    tokenizer: str | None = None,
+) -> LMMixtureDatasetConfig:
+    """Build a training data config for a locally generated Route-B cache."""
+    cache_root = os.path.abspath(os.path.expanduser(cache_root or DEFAULT_ROUTE_B_CACHE_ROOT))
+    tokenizer = tokenizer or DEFAULT_TOKENIZER
+    validation_root = os.path.join(cache_root, "validation", "paloma_c4_en")
+
+    configs = {"route_b_dclm_mix": UrlDatasetSourceConfig(train_urls=[], validation_urls=[], cache_dir=cache_root)}
+    train_weights = {"route_b_dclm_mix": 1.0}
+    if os.path.isdir(os.path.join(validation_root, "validation")):
+        configs["paloma/c4_en"] = UrlDatasetSourceConfig(
+            train_urls=[], validation_urls=[], cache_dir=validation_root
+        )
+        train_weights["paloma/c4_en"] = 0.0
+
+    return LMMixtureDatasetConfig(
+        configs=configs,
+        train_weights=train_weights,
+        tokenizer=tokenizer,
+        shuffle=False,
+    )
 
 
 def template(
@@ -64,7 +98,11 @@ def template(
     optimizer,
     baseline_config,
     sweep_grids,
-    tpu_type="v5litepod-128",
+    gpu_type=DEFAULT_GPU_TYPE,
+    gpu_count=DEFAULT_GPU_COUNT,
+    cache_root=DEFAULT_ROUTE_B_CACHE_ROOT,
+    tokenizer=DEFAULT_TOKENIZER,
+    tokenized_data=None,
     DEBUG_MODE=False,
     random_suffix=None,
     force_run=False,
@@ -73,13 +111,18 @@ def template(
     target_data = target_chinchilla * calculate_chinchilla(llama_model)
     data_size = f"{target_data//1_000_000_000}B"
     optimizer_config_generator = map_tag_to_config[optimizer]
+    resources = GpuConfig(gpu_count=gpu_count, accelerator_type=gpu_type)
+    tokenized_data = tokenized_data or build_route_b_data_config(cache_root, tokenizer)
+    train_cache = os.path.join(os.path.abspath(os.path.expanduser(cache_root)), "train")
+    if not os.path.isdir(train_cache):
+        raise FileNotFoundError(f"Route-B train cache not found: {train_cache}")
     tags = (model_size, data_size, optimizer)
     approximate_best_config_list = []
 
     def optimal_run_set(baseline_config):
         target_steps, config_in_dict = create_configs(baseline_config, sweep_grids, target_data=target_data)
         train_configs = config_to_train_config(
-            config_in_dict, target_steps, config_generator=optimizer_config_generator, tpu_type=tpu_type
+            config_in_dict, target_steps, config_generator=optimizer_config_generator, resources=resources
         )
         # use wandb to avoid rerunning
         new_train_configs = []
@@ -93,7 +136,7 @@ def template(
         # For force run, just create a single train config from baseline
         target_steps, _ = create_configs(baseline_config, {}, target_data=target_data)  # Empty sweep grid
         train_configs = config_to_train_config(
-            [baseline_config], target_steps, config_generator=optimizer_config_generator, tpu_type=tpu_type
+            [baseline_config], target_steps, config_generator=optimizer_config_generator, resources=resources
         )
         tags = ("debug", *tags)
     else:
@@ -131,7 +174,7 @@ def template(
             prefix=prefix,
             model_config=llama_model,
             train_configs=train_configs,
-            tokenized_data=dclm_mixture_config_llama3,
+            tokenized_data=tokenized_data,
             format_train_config=map_tag_to_format[optimizer],
             default_train=default_train,
             tags=("llama", "dclm", *tags),

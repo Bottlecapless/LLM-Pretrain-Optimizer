@@ -1,42 +1,34 @@
-import wandb
 import dataclasses
 import logging
 from collections.abc import Sequence
-from marin.resources import TpuPodConfig
+
 import ray
 from levanter.models.llama import LlamaConfig
 
 from experiments.simple_train_config import SimpleTrainConfig
-from marin.execution.executor import ExecutorStep, versioned
+from marin.execution.executor import ExecutorStep
 
 logger = logging.getLogger("ray")
-
-# Initialize the WandB API
-api = wandb.Api()
-username = "marin-community"
-project = "optimizer-scaling"
-thshold = 3e-3
-
 
 def config_to_train_config(
     config_in_dict,
     target_steps,
     config_generator,
-    tpu_type="v4-128",
+    resources,
 ):
     train_configs = []
     for config, target_step in zip(config_in_dict, target_steps, strict=False):
         new_config = config.copy()
         train_batch_size = new_config.pop("train_batch_size")
+        learning_rate = new_config["learning_rate"]
         optimizer_config = config_generator(**new_config)
-        if isinstance(tpu_type, str):
-            tpu_type = TpuPodConfig(versioned(tpu_type))
         train_configs.append(
             SimpleTrainConfig(
-                resources=tpu_type,
+                resources=resources,
                 steps_per_eval=min(1000, target_step - 1),
                 num_train_steps=target_step,
                 train_batch_size=train_batch_size,
+                learning_rate=learning_rate,
                 optimizer_config=optimizer_config,
             )
         )
@@ -75,6 +67,7 @@ def make_sweep_steps(
             model_config=model_config,
             tokenized=tokenized_data,
             tags=tags,
+            use_default_validation=False,
         )
 
         step = dataclasses.replace(step, fn=_failure_ok_train)
