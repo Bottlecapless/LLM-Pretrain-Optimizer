@@ -1,0 +1,19 @@
+# CPU-only dependency set for building the Route-B token cache.
+# Versions match this repository's uv.lock; do not use this file for training.
+levanter==1.2.dev1437
+GitPython==3.1.44
+haliax==1.4.dev378
+jax==0.5.2
+tensorstore==0.1.74
+optax==0.2.5
+equinox==0.13.0
+ray==2.45.0
+transformers==4.53.1
+tokenizers==0.21.2
+huggingface-hub==0.33.2
+sentencepiece==0.2.0
+pyarrow==20.0.0
+zstandard==0.23.0
+fsspec[http]==2025.3.0
+numpy==1.26.4
+requests==2.32.4
