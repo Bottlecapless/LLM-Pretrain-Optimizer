@@ -27,9 +27,13 @@ This directory contains the code and configs to reproduce the optimizer study de
   - New layout expected: `baseline_config/{optimizer}/{model_size}/{chinchilla}/*.json` and `sweep_grids/{optimizer}/{model_size}/{chinchilla}/*.json`.
   - CLI (dry-run prints the resolved payloads):
     ```bash
-    python experiments/optimizer_sweep/launch.py adamw 1 130m --dry-run
-    python experiments/optimizer_sweep/launch.py muon 8 520m --tpu-type v5litepod-128
+    python experiments/optimizer_sweep/launch.py adamw 1 130m --dry-run \
+      --gpu-type H100 --gpu-count 1 \
+      --cache-root /mnt/afs/250010233/data/marin_route_b/dclm_mix_5.37B
+    python experiments/optimizer_sweep/launch.py muon 8 520m \
+      --gpu-type H100 --gpu-count 1
     ```
+  - Defaults: one H100, cache `/mnt/afs/250010233/data/marin_route_b/dclm_mix_5.37B`, tokenizer `marin-community/marin-tokenizer`. They can also be set with `ROUTE_B_GPU_TYPE`, `ROUTE_B_GPU_COUNT`, `ROUTE_B_CACHE_ROOT`, and `ROUTE_B_TOKENIZER`.
   - Noted here for legacy reason, Muon and Scion uses keys 'muon_to_adamw_lr' and 'scion_to_signgd_lr', this means the ratio between 'adam_lr' used for LM heads, embeddings and LayerNorm and 'muon_lr' used for other linear layers.
 
 - `defaults.py`
@@ -94,9 +98,11 @@ This directory contains the code and configs to reproduce the optimizer study de
 2. Launch training jobs from JSONs:
    ```bash
    # preview jobs
-   python experiments/optimizer_sweep/launch.py soape 4 300m --dry-run
+   python experiments/optimizer_sweep/launch.py soape 4 300m --dry-run \
+     --gpu-type H100 --gpu-count 1
    # launch
-   python experiments/optimizer_sweep/launch.py soape 4 300m --tpu-type v5litepod-128
+   python experiments/optimizer_sweep/launch.py soape 4 300m \
+     --gpu-type H100 --gpu-count 1
    ```
 3. Collect best runs and persist a uniform results tree:
    ```bash

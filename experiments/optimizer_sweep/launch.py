@@ -8,9 +8,22 @@
 # 3. Launches training runs using the template.py framework with these configurations
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any
-from marin.optimizer_sweep.template import template
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from marin.optimizer_sweep.template import (  # noqa: E402
+    DEFAULT_GPU_COUNT,
+    DEFAULT_GPU_TYPE,
+    DEFAULT_ROUTE_B_CACHE_ROOT,
+    DEFAULT_TOKENIZER,
+    template,
+)
 
 
 def _iter_model_size_dirs(base: Path) -> list[Path]:
@@ -19,7 +32,20 @@ def _iter_model_size_dirs(base: Path) -> list[Path]:
     return sorted([p for p in base.iterdir() if p.is_dir()])
 
 
-OPT_SWEEP_DIR = Path("experiments/optimizer_sweep")
+OPT_SWEEP_DIR = Path(__file__).resolve().parent
+
+
+def _resolve_model_size(base: Path, model_size: str | None) -> str | None:
+    """Resolve a user-provided model size against case-sensitive directory names."""
+    if model_size is None:
+        return None
+    matches = [p.name for p in _iter_model_size_dirs(base) if p.name.lower() == model_size.lower()]
+    if not matches:
+        available = ", ".join(p.name for p in _iter_model_size_dirs(base))
+        raise SystemExit(f"No model size directory matching {model_size!r}. Available: {available or '(none)'}")
+    if len(matches) > 1:
+        raise SystemExit(f"Ambiguous model size {model_size!r}: {', '.join(matches)}")
+    return matches[0]
 
 
 def _find_jsons_new_layout(
@@ -32,6 +58,7 @@ def _find_jsons_new_layout(
     """
     base_baseline = OPT_SWEEP_DIR / "baseline_config" / optimizer.lower()
     base_grids = OPT_SWEEP_DIR / "sweep_grids" / optimizer.lower()
+    model_size = _resolve_model_size(base_baseline, model_size)
 
     candidate_dirs: list[Path]
     if model_size is None:
@@ -86,12 +113,21 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true", help="Only print intended launches without executing")
     parser.add_argument("--force-run", action="store_true", help="Pass force_run=True to template")
-    parser.add_argument("--tpu-type", type=str, default="v5litepod-128", help="TPU type")
+    parser.add_argument("--gpu-type", type=str, default=DEFAULT_GPU_TYPE, help="GPU accelerator type")
+    parser.add_argument("--gpu-count", type=int, default=DEFAULT_GPU_COUNT, help="Number of GPUs per run")
+    parser.add_argument(
+        "--cache-root",
+        type=str,
+        default=DEFAULT_ROUTE_B_CACHE_ROOT,
+        help="Route-B cache root containing train/ and validation/",
+    )
+    parser.add_argument("--tokenizer", type=str, default=DEFAULT_TOKENIZER, help="Tokenizer used by the cache")
     parser.add_argument("--debug", action="store_true", help="Enable template DEBUG_MODE")
     parser.add_argument("--random-suffix", type=str, default=None, help="Random suffix for template prefix")
     parser.add_argument("--name-filter", type=str, default=None, help="Substring filter on JSON filename stem")
 
     args = parser.parse_args()
+    args.cache_root = os.path.abspath(os.path.expanduser(args.cache_root))
 
     optimizer = args.optimizer.lower()
     chinchilla = int(args.chinchilla) if args.chinchilla.is_integer() else args.chinchilla  # keep 1 vs 1.0 tidy
@@ -136,7 +172,10 @@ def main() -> None:
                         "model_size": model_size,
                         "target_chinchilla": target_chinchilla,
                         "optimizer": optimizer_name,
-                        "tpu_type": args.tpu_type,
+                        "gpu_type": args.gpu_type,
+                        "gpu_count": args.gpu_count,
+                        "cache_root": args.cache_root,
+                        "tokenizer": args.tokenizer,
                         "force_run": args.force_run,
                         "debug": args.debug,
                         "random_suffix": args.random_suffix,
@@ -152,7 +191,10 @@ def main() -> None:
                 optimizer_name,
                 baseline_config,
                 sweep_grids,
-                tpu_type=args.tpu_type,
+                gpu_type=args.gpu_type,
+                gpu_count=args.gpu_count,
+                cache_root=args.cache_root,
+                tokenizer=args.tokenizer,
                 DEBUG_MODE=args.debug,
                 random_suffix=args.random_suffix,
                 force_run=args.force_run,
