@@ -17,7 +17,7 @@ set -euo pipefail
 #   WANDB_ENTITY=marin-community
 #   WANDB_PROJECT=optimizer-scaling
 #   WANDB_GROUP=paper130m-adamw-mini-muon
-#   WANDB_MODE=online        online 时必须提供 WANDB_API_KEY（或已有 ~/.netrc）
+#   WANDB_MODE=offline       默认离线记录；改成 online 时必须提供 WANDB_API_KEY
 #   DRY_RUN=0                设为 1 只打印展开后的 6 个配置，不提交训练
 # 运行：bash src/bash_yx/run_paper_130m_adamw_mini_muon_4xh100.sh
 
@@ -52,7 +52,7 @@ PYTHON="$(command -v python)"
 : "${WANDB_ENTITY:=marin-community}"
 : "${WANDB_PROJECT:=optimizer-scaling}"
 : "${WANDB_GROUP:=paper130m-adamw-mini-muon}"
-: "${WANDB_MODE:=online}"
+: "${WANDB_MODE:=offline}"
 : "${DRY_RUN:=0}"
 : "${SKIP_WANDB_CHECK:=0}"
 
@@ -74,6 +74,10 @@ export SCENARIOS
 export DRY_RUN
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
+
+WANDB_MODE="${WANDB_MODE,,}"
+export WANDB_MODE
+echo "[wandb] resolved WANDB_MODE=${WANDB_MODE}"
 
 if [[ "${DRY_RUN}" != "1" && "${WANDB_MODE}" =~ ^(online|shared)$ && -z "${WANDB_API_KEY:-}" && ! -f "${HOME}/.netrc" && "${SKIP_WANDB_CHECK}" != "1" ]]; then
   echo "[error] WANDB_MODE=${WANDB_MODE}，但未找到 WANDB_API_KEY 或 ~/.netrc。" >&2
